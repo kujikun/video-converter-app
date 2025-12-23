@@ -26,6 +26,11 @@ if uploaded_file is not None:
     tfile.write(uploaded_file.read())
     video_path = tfile.name
     
+    # 動画が変更されたら、前のサムネイル情報をリセットする
+    if 'current_video_path' not in st.session_state or st.session_state.current_video_path != video_path:
+        st.session_state.current_video_path = video_path
+        st.session_state.selected_thumb_img = None
+    
     try:
         clip = VideoFileClip(video_path)
         st.video(video_path)
@@ -40,14 +45,13 @@ if uploaded_file is not None:
         col1, col2 = st.columns(2)
         with col1:
             out_fmt = st.radio("出力形式", ["GIF", "WebP"])
-            # リサイズ幅の初期値を動画の幅に合わせるなどの工夫も可能
             resize_width = st.number_input("横幅リサイズ (px)", value=300, step=50)
         with col2:
             fps = st.slider("FPS (滑らかさ)", 5, 30, 10)
             
         st.markdown("---")
         
-        # --- 透かし機能 (フォント選択対応) ---
+        # --- 透かし機能 ---
         enable_watermark = st.checkbox("透かし(文字)を入れる")
         wm_text = ""
         wm_font_path = None
@@ -58,12 +62,10 @@ if uploaded_file is not None:
             wm_color = wm_col1.color_picker("文字色", "#FFFFFF")
             wm_opacity = wm_col2.slider("不透明度", 0, 100, 80)
             
-            # フォント選択ロジック
             font_source = st.radio("フォント選択", ["リストから選択", "アップロード"], horizontal=True)
             
             if font_source == "リストから選択":
                 if available_fonts:
-                    # フォルダ内のフォントをプルダウンで表示
                     selected_font_name = st.selectbox("使用するフォント", available_fonts)
                     wm_font_path = os.path.join(FONTS_DIR, selected_font_name)
                 else:
@@ -77,26 +79,50 @@ if uploaded_file is not None:
 
         st.markdown("---")
         
-        # --- サムネイル機能 ---
+        # --- サムネイル機能 (修正版) ---
         enable_thumb = st.checkbox("先頭にサムネイルを付ける")
-        thumb_img_final = None
-        
+        thumb_img_final = None # 最終的に使う変数
+
         if enable_thumb:
             thumb_mode = st.radio("サムネ画像の指定", ["動画内のフレームを使用", "画像をアップロード"], horizontal=True)
             
             if thumb_mode == "動画内のフレームを使用":
-                thumb_time = st.slider("どの瞬間の画像を使いますか？(秒)", 0.0, clip.duration, 0.0, 0.1)
-                if st.button("フレームを確認"):
-                    frame_at_time = clip.get_frame(thumb_time)
-                    st.image(frame_at_time, caption=f"{thumb_time}秒地点の画像", width=200)
-                thumb_img_final = Image.fromarray(clip.get_frame(thumb_time))
+                st.caption("下のスライダーで時間を選び、「フレームを取得」ボタンを押してください")
+                thumb_time = st.slider("時間指定(秒)", 0.0, clip.duration, 0.0, 0.1)
+                
+                # ボタンを押した時だけ、重い処理(get_frame)を実行する
+                if st.button("📸 フレームを取得・更新"):
+                    try:
+                        frame_at_time = clip.get_frame(thumb_time)
+                        # メモリ(記憶領域)に保存
+                        st.session_state.selected_thumb_img = Image.fromarray(frame_at_time)
+                        st.success(f"{thumb_time}秒地点の画像を取得しました！")
+                    except Exception as e:
+                        st.error(f"画像の取得に失敗しました: {e}")
+
+                # 取得済みの画像があれば表示＆セット
+                if st.session_state.selected_thumb_img is not None:
+                    st.image(st.session_state.selected_thumb_img, caption="使用するサムネイル", width=200)
+                    thumb_img_final = st.session_state.selected_thumb_img
+                else:
+                    st.warning("⚠️ まだ画像が取得されていません。「フレームを取得」ボタンを押してください。")
+                
             else:
+                # 画像アップロードモード
                 thumb_file = st.file_uploader("画像をアップロード", type=["png", "jpg"])
                 if thumb_file:
                     thumb_img_final = Image.open(thumb_file)
 
     # --- 実行ボタン ---
-    if st.button("変換開始 (処理には少し時間がかかります)", type="primary"):
+    st.markdown("---")
+    
+    # 実行可能かチェック
+    ready_to_go = True
+    if enable_thumb and thumb_img_final is None:
+        ready_to_go = False
+        st.error("⚠️ サムネイル画像が決まっていません。")
+
+    if ready_to_go and st.button("変換開始 (処理には少し時間がかかります)", type="primary"):
         progress_bar = st.progress(0)
         status_text = st.empty()
         
@@ -155,12 +181,12 @@ if uploaded_file is not None:
             output_filename = f"output.{out_fmt.lower()}"
             
             if out_fmt == "WebP":
-                # 【重要】エラー回避設定
+                # WebPのエラー対策設定
                 processed_clip.write_videofile(
                     output_filename, 
                     fps=fps, 
                     codec='libwebp', 
-                    ffmpeg_params=["-preset", "default", "-loop", "0"] # ループ設定も追加
+                    ffmpeg_params=["-preset", "default", "-loop", "0"]
                 )
             else:
                 processed_clip.write_gif(output_filename, fps=fps)

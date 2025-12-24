@@ -10,8 +10,7 @@ import numpy as np
 st.set_page_config(page_title="動画GIF/WebP変換ツール", layout="centered")
 st.title("🎥 動画 GIF/WebP 変換ツール")
 
-# --- フォントの準備 (自動スキャン) ---
-# "fonts" フォルダ内の .ttf や .otf をすべて探す
+# --- フォントの準備 ---
 FONTS_DIR = "fonts"
 available_fonts = []
 if os.path.exists(FONTS_DIR):
@@ -26,13 +25,14 @@ if uploaded_file is not None:
     tfile.write(uploaded_file.read())
     video_path = tfile.name
     
-    # 動画が変更されたら、前のサムネイル情報をリセットする
+    # 動画が変わったら状態リセット
     if 'current_video_path' not in st.session_state or st.session_state.current_video_path != video_path:
         st.session_state.current_video_path = video_path
         st.session_state.selected_thumb_img = None
     
     try:
         clip = VideoFileClip(video_path)
+        # プレビュー表示
         st.video(video_path)
         st.info(f"動画情報: {clip.duration:.1f}秒 / {clip.w}x{clip.h}")
     except Exception as e:
@@ -79,28 +79,42 @@ if uploaded_file is not None:
 
         st.markdown("---")
         
-        # --- サムネイル機能 (修正版) ---
+        # --- サムネイル機能 (修正強化版) ---
         enable_thumb = st.checkbox("先頭にサムネイルを付ける")
-        thumb_img_final = None # 最終的に使う変数
+        thumb_img_final = None 
 
         if enable_thumb:
             thumb_mode = st.radio("サムネ画像の指定", ["動画内のフレームを使用", "画像をアップロード"], horizontal=True)
             
             if thumb_mode == "動画内のフレームを使用":
                 st.caption("下のスライダーで時間を選び、「フレームを取得」ボタンを押してください")
-                thumb_time = st.slider("時間指定(秒)", 0.0, clip.duration, 0.0, 0.1)
                 
-                # ボタンを押した時だけ、重い処理(get_frame)を実行する
+                # 【修正1】動画の最後尾ギリギリを選択できないように -0.2秒する (エラー回避)
+                safe_max_duration = max(0.0, clip.duration - 0.2)
+                thumb_time = st.slider("時間指定(秒)", 0.0, safe_max_duration, 0.0, 0.1)
+                
                 if st.button("📸 フレームを取得・更新"):
                     try:
+                        # 画像取得トライ
                         frame_at_time = clip.get_frame(thumb_time)
-                        # メモリ(記憶領域)に保存
                         st.session_state.selected_thumb_img = Image.fromarray(frame_at_time)
                         st.success(f"{thumb_time}秒地点の画像を取得しました！")
+                        
+                        # 【修正2】強制的に画面をリロードして、下の警告を即座に消す
+                        st.rerun() 
+                        
                     except Exception as e:
-                        st.error(f"画像の取得に失敗しました: {e}")
+                        # 【修正3】取得失敗時のリトライ（少し時間をずらして再試行）
+                        try:
+                            fallback_time = max(0, thumb_time - 0.1)
+                            frame_at_time = clip.get_frame(fallback_time)
+                            st.session_state.selected_thumb_img = Image.fromarray(frame_at_time)
+                            st.warning(f"指定時間の画像取得に失敗したため、{fallback_time}秒地点を取得しました。")
+                            st.rerun()
+                        except:
+                            st.error(f"画像の取得に失敗しました。別の時間を選択してください。\n詳細: {e}")
 
-                # 取得済みの画像があれば表示＆セット
+                # 保存された画像を表示
                 if st.session_state.selected_thumb_img is not None:
                     st.image(st.session_state.selected_thumb_img, caption="使用するサムネイル", width=200)
                     thumb_img_final = st.session_state.selected_thumb_img
@@ -108,7 +122,7 @@ if uploaded_file is not None:
                     st.warning("⚠️ まだ画像が取得されていません。「フレームを取得」ボタンを押してください。")
                 
             else:
-                # 画像アップロードモード
+                # アップロードモード
                 thumb_file = st.file_uploader("画像をアップロード", type=["png", "jpg"])
                 if thumb_file:
                     thumb_img_final = Image.open(thumb_file)
@@ -116,7 +130,6 @@ if uploaded_file is not None:
     # --- 実行ボタン ---
     st.markdown("---")
     
-    # 実行可能かチェック
     ready_to_go = True
     if enable_thumb and thumb_img_final is None:
         ready_to_go = False
@@ -181,7 +194,6 @@ if uploaded_file is not None:
             output_filename = f"output.{out_fmt.lower()}"
             
             if out_fmt == "WebP":
-                # WebPのエラー対策設定
                 processed_clip.write_videofile(
                     output_filename, 
                     fps=fps, 

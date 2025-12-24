@@ -13,7 +13,7 @@ st.title("🎥 動画 GIF/WebP 変換ツール")
 FONTS_DIR = "fonts"
 available_fonts = []
 if os.path.exists(FONTS_DIR):
-    available_fonts = [f for f in os.listdir(FONTS_DIR) if f.lower().endswith(('.ttf', '.otf'))]
+    available_fonts = sorted([f for f in os.listdir(FONTS_DIR) if f.lower().endswith(('.ttf', '.otf'))])
 
 # --- 1. メイン入力 ---
 uploaded_file = st.file_uploader("動画ファイルを選択 (mp4, mov, avi)", type=['mp4', 'mov', 'avi'])
@@ -25,8 +25,8 @@ if uploaded_file is not None:
     video_path = tfile.name
     
     # 動画が変わったら状態リセット
-    if 'current_video_path' not in st.session_state or st.session_state.current_video_path != video_path:
-        st.session_state.current_video_path = video_path
+    if 'last_video_name' not in st.session_state or st.session_state.last_video_name != uploaded_file.name:
+        st.session_state.last_video_name = uploaded_file.name
         st.session_state.selected_thumb_img = None
     
     try:
@@ -49,7 +49,7 @@ if uploaded_file is not None:
             
         st.markdown("---")
         
-        # --- 透かし機能 (強化版) ---
+        # --- 透かし機能 (サイズ変更追加) ---
         enable_watermark = st.checkbox("透かし(文字)を入れる")
         wm_text = ""
         wm_font_path = None
@@ -57,15 +57,15 @@ if uploaded_file is not None:
         if enable_watermark:
             wm_text = st.text_input("透かし文字", "Sample")
             
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             with c1:
                 wm_color = st.color_picker("文字色", "#FFFFFF")
-                # 位置選択機能を追加
                 wm_position = st.selectbox("配置場所", ["右下", "左下", "左上", "右上", "中央"])
             with c2:
                 wm_opacity = st.slider("不透明度", 0, 100, 100)
-                # 縁取りオプションを追加
-                wm_shadow = st.checkbox("文字に縁取り(影)を付ける", value=True)
+                wm_size = st.slider("文字サイズ", 10, 200, 40) # サイズ変更機能
+            with c3:
+                wm_shadow = st.checkbox("縁取り(影)付", value=True)
             
             font_source = st.radio("フォント選択", ["リストから選択", "アップロード"], horizontal=True)
             
@@ -84,7 +84,7 @@ if uploaded_file is not None:
 
         st.markdown("---")
         
-        # --- サムネイル機能 (ロジック修正版) ---
+        # --- サムネイル機能 (記憶保持を強化) ---
         enable_thumb = st.checkbox("先頭にサムネイルを付ける")
         thumb_img_final = None 
 
@@ -93,29 +93,26 @@ if uploaded_file is not None:
             
             if thumb_mode == "動画内のフレームを使用":
                 st.caption("スライダーで時間を選び、ボタンを押してください")
-                
-                # エラー回避のため上限を制限
                 safe_max_duration = max(0.0, clip.duration - 0.2)
                 thumb_time = st.slider("時間指定(秒)", 0.0, safe_max_duration, 0.0, 0.1)
                 
-                # ボタン処理
-                if st.button("📸 フレームを取得・更新"):
+                if st.button("📸 このフレームをサムネイルに確定する"):
                     try:
-                        frame_at_time = clip.get_frame(thumb_time)
-                        st.session_state.selected_thumb_img = Image.fromarray(frame_at_time)
-                        st.rerun() # 即再読み込みして画面を更新
+                        frame = clip.get_frame(thumb_time)
+                        # 確実にセッションに保存
+                        st.session_state.selected_thumb_img = Image.fromarray(frame)
+                        st.rerun() 
                     except Exception as e:
                         st.error(f"取得失敗: {e}")
 
-                # 表示ロジックの整理（ここを修正）
+                # 判定: セッションに画像があるか？
                 if st.session_state.selected_thumb_img is not None:
-                    st.image(st.session_state.selected_thumb_img, caption="✅ セットされたサムネイル", width=200)
+                    st.image(st.session_state.selected_thumb_img, caption="✅ サムネイルが確定しました", width=200)
                     thumb_img_final = st.session_state.selected_thumb_img
                 else:
-                    st.info("👈 上のボタンを押して、サムネイル画像を確定させてください。")
+                    st.info("👈 上のボタンを押して、画像を確定させてください。")
                 
             else:
-                # アップロードモード
                 thumb_file = st.file_uploader("画像をアップロード", type=["png", "jpg"])
                 if thumb_file:
                     thumb_img_final = Image.open(thumb_file)
@@ -126,9 +123,9 @@ if uploaded_file is not None:
     ready_to_go = True
     if enable_thumb and thumb_img_final is None:
         ready_to_go = False
-        st.warning("⚠️ サムネイル画像が決まっていません。")
+        st.warning("⚠️ サムネイル画像が確定していません。")
 
-    if ready_to_go and st.button("変換開始 (処理には少し時間がかかります)", type="primary"):
+    if ready_to_go and st.button("変換開始 (処理開始まで数秒かかります)", type="primary"):
         progress_bar = st.progress(0)
         status_text = st.empty()
         
@@ -138,7 +135,7 @@ if uploaded_file is not None:
             processed_clip = clip.resize(width=resize_width)
             progress_bar.progress(20)
             
-            # 2. 透かし合成 (強化版)
+            # 2. 透かし合成
             if enable_watermark and wm_text and wm_font_path:
                 status_text.text("2/4 透かし合成中...")
                 
@@ -147,55 +144,36 @@ if uploaded_file is not None:
                     txt_layer = Image.new("RGBA", pil_img.size, (255, 255, 255, 0))
                     draw = ImageDraw.Draw(txt_layer)
                     
-                    # フォントサイズ決定 (高さの1/8程度)
                     try:
-                        font_size = int(pil_img.size[1] / 8) 
-                        font = ImageFont.truetype(wm_font_path, font_size)
+                        font = ImageFont.truetype(wm_font_path, wm_size)
                     except:
                         font = ImageFont.load_default()
                     
-                    # テキストサイズ計測
                     bbox = draw.textbbox((0, 0), wm_text, font=font)
-                    text_w = bbox[2] - bbox[0]
-                    text_h = bbox[3] - bbox[1]
-                    
-                    # 座標計算 (マージン20px)
+                    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
                     margin = 20
                     W, H = pil_img.size
                     
-                    if wm_position == "右下":
-                        x, y = W - text_w - margin, H - text_h - margin
-                    elif wm_position == "左下":
-                        x, y = margin, H - text_h - margin
-                    elif wm_position == "左上":
-                        x, y = margin, margin
-                    elif wm_position == "右上":
-                        x, y = W - text_w - margin, margin
-                    else: # 中央
-                        x, y = (W - text_w) / 2, (H - text_h) / 2
+                    if wm_position == "右下": x, y = W - text_w - margin, H - text_h - margin
+                    elif wm_position == "左下": x, y = margin, H - text_h - margin
+                    elif wm_position == "左上": x, y = margin, margin
+                    elif wm_position == "右上": x, y = W - text_w - margin, margin
+                    else: x, y = (W - text_w) / 2, (H - text_h) / 2
                     
-                    # 画面外にはみ出ないよう調整
-                    x = max(0, min(x, W - text_w))
-                    y = max(0, min(y, H - text_h))
+                    x, y = max(0, min(x, W - text_w)), max(0, min(y, H - text_h))
                     
-                    # 色設定
                     rgb = ImageColor.getrgb(wm_color)
-                    fill_color = (rgb[0], rgb[1], rgb[2], int(255 * wm_opacity / 100))
+                    fill_c = (rgb[0], rgb[1], rgb[2], int(255 * wm_opacity / 100))
                     
-                    # 縁取り描画 (影)
                     if wm_shadow:
-                        outline_color = (0, 0, 0, int(255 * wm_opacity / 100))
-                        stroke_width = 2
-                        # 文字の周りに少しずらして黒文字を描く
-                        for adj_x in range(-stroke_width, stroke_width+1):
-                            for adj_y in range(-stroke_width, stroke_width+1):
-                                draw.text((x+adj_x, y+adj_y), wm_text, font=font, fill=outline_color)
+                        sha_c = (0, 0, 0, int(255 * wm_opacity / 100))
+                        sw = 2
+                        for ax in range(-sw, sw+1):
+                            for ay in range(-sw, sw+1):
+                                draw.text((x+ax, y+ay), wm_text, font=font, fill=sha_c)
 
-                    # 本体描画
-                    draw.text((x, y), wm_text, font=font, fill=fill_color)
-                    
-                    out = Image.alpha_composite(pil_img, txt_layer)
-                    return np.array(out.convert("RGB"))
+                    draw.text((x, y), wm_text, font=font, fill=fill_c)
+                    return np.array(Image.alpha_composite(pil_img, txt_layer).convert("RGB"))
 
                 processed_clip = processed_clip.fl_image(add_watermark)
             
@@ -204,47 +182,31 @@ if uploaded_file is not None:
             # 3. サムネイル結合
             if enable_thumb and thumb_img_final:
                 status_text.text("3/4 サムネイル結合中...")
-                thumb_img = thumb_img_final.convert("RGB")
-                aspect = thumb_img.height / thumb_img.width
-                target_h = int(resize_width * aspect)
-                thumb_img = thumb_img.resize((resize_width, target_h), Image.Resampling.LANCZOS)
-                thumb_clip = ImageClip(np.array(thumb_img)).set_duration(0.1).set_fps(fps)
-                processed_clip = concatenate_videoclips([thumb_clip, processed_clip], method="compose")
+                t_img = thumb_img_final.convert("RGB")
+                target_h = int(resize_width * (t_img.height / t_img.width))
+                t_img = t_img.resize((resize_width, target_h), Image.Resampling.LANCZOS)
+                t_clip = ImageClip(np.array(t_img)).set_duration(0.1).set_fps(fps)
+                processed_clip = concatenate_videoclips([t_clip, processed_clip], method="compose")
             
             progress_bar.progress(70)
 
             # 4. 書き出し
-            status_text.text(f"4/4 {out_fmt}へ変換中...書き込みに時間がかかります")
-            output_filename = f"output.{out_fmt.lower()}"
-            
+            status_text.text(f"4/4 {out_fmt}へ変換中...")
+            out_file = f"output.{out_fmt.lower()}"
             if out_fmt == "WebP":
-                processed_clip.write_videofile(
-                    output_filename, 
-                    fps=fps, 
-                    codec='libwebp', 
-                    ffmpeg_params=["-preset", "default", "-loop", "0"]
-                )
+                processed_clip.write_videofile(out_file, fps=fps, codec='libwebp', ffmpeg_params=["-preset", "default", "-loop", "0"])
             else:
-                processed_clip.write_gif(output_filename, fps=fps)
+                processed_clip.write_gif(out_file, fps=fps)
             
             progress_bar.progress(100)
-            status_text.success("変換完了！下のボタンからダウンロードしてください。")
+            status_text.success("完了！")
             
-            with open(output_filename, "rb") as f:
-                btn = st.download_button(
-                    label=f"📥 {out_fmt}をダウンロード",
-                    data=f,
-                    file_name=f"animation.{out_fmt.lower()}",
-                    mime=f"image/{out_fmt.lower()}"
-                )
-            
-            st.image(output_filename, caption="完成品プレビュー")
+            with open(out_file, "rb") as f:
+                st.download_button(f"📥 {out_fmt}をダウンロード", f, file_name=f"result.{out_fmt.lower()}", mime=f"image/{out_fmt.lower()}")
+            st.image(out_file)
 
         except Exception as e:
-            st.error(f"エラー詳細: {e}")
+            st.error(f"エラー: {e}")
         finally:
             clip.close()
             if 'processed_clip' in locals(): processed_clip.close()
-
-else:
-    st.info("👆 動画をアップロードしてください")

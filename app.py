@@ -166,7 +166,7 @@ if uploaded_file is not None:
                     txt = st.text_input(L["wm_text"], f"Text {i+1}", key=f"txt_{i}")
                     c_wm1, c_wm2, c_wm3 = st.columns(3)
                     with c_wm1:
-                        pos = st.selectbox(L["wm_pos"], ["右下", "左下", "左上", "右上", "中央"], key=f"pos_{i}")
+                        pos = st.selectbox(L["wm_pos"], ["右下(Lower right)", "左下(Lower left)", "左上(Upper left)", "右上(Upper right)", "中央(Center)"], key=f"pos_{i}")
                         color = st.color_picker(L["wm_color"], "#FFFFFF", key=f"col_{i}")
                     with c_wm2:
                         size = st.slider(L["wm_size"], 10, 200, 40, key=f"size_{i}")
@@ -275,3 +275,4 @@ if uploaded_file is not None:
             if 'processed' in locals(): processed.close()
 else:
     st.info(L["info_upload"])
+
